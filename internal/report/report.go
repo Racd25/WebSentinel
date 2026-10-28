@@ -1,0 +1,172 @@
+package report
+
+import (
+	"encoding/json"
+	"html/template"
+	"os"
+	"time"
+
+	"websentinel/internal/audit"
+)
+
+// WebAuditReport es la foto exportable de una auditoría web.
+type WebAuditReport struct {
+	Target      string          `json:"target"`
+	GeneratedAt time.Time       `json:"generated_at"`
+	Score       int             `json:"score"`
+	Grade       string          `json:"grade"`
+	Summary     map[string]int  `json:"summary"`
+	Findings    []audit.Finding `json:"findings"`
+}
+
+// New construye el reporte y calcula puntaje + calificación.
+func New(target string, findings []audit.Finding) WebAuditReport {
+	counts := map[string]int{"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}
+	score := 100
+
+	for _, f := range findings {
+		counts[f.Severity]++
+		switch f.Severity {
+		case "CRITICAL":
+			score -= 50
+		case "HIGH":
+			score -= 20
+		case "MEDIUM":
+			score -= 5
+		case "LOW":
+			score -= 1
+		}
+	}
+
+	if score < 0 {
+		score = 0
+	}
+
+	grade := calculateGrade(score)
+
+	return WebAuditReport{
+		Target:      target,
+		GeneratedAt: time.Now(),
+		Score:       score,
+		Grade:       grade,
+		Summary:     counts,
+		Findings:    findings,
+	}
+}
+
+func calculateGrade(score int) string {
+	switch {
+	case score >= 90:
+		return "A"
+	case score >= 70:
+		return "B"
+	case score >= 50:
+		return "C"
+	case score >= 30:
+		return "D"
+	default:
+		return "F"
+	}
+}
+
+// SaveJSON escribe el reporte en JSON indentado.
+func SaveJSON(r WebAuditReport, path string) error {
+	data, err := json.MarshalIndent(r, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0644)
+}
+
+const htmlTmpl = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>WebSentinel Report — {{.Target}}</title>
+<style>
+  body { font-family: "Segoe UI", Arial, sans-serif; margin: 2rem; background: #f6f8fa; color: #24292f; }
+  h1 { margin-bottom: 0.2rem; }
+  code { background: #eaeef2; padding: 0.1rem 0.35rem; border-radius: 4px; font-size: 0.85em; }
+  .hero { display: flex; gap: 2rem; align-items: center; margin: 1.5rem 0; }
+  .grade-circle { width: 120px; height: 120px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 3rem; font-weight: 800; color: #fff; }
+  .grade-A { background: #2ecc71; }
+  .grade-B { background: #3498db; }
+  .grade-C { background: #f39c12; }
+  .grade-D { background: #e67e22; }
+  .grade-F { background: #e74c3c; }
+  .score-info { font-size: 1.1rem; color: #57606a; }
+  .score-info strong { color: #24292f; font-size: 1.5rem; }
+  .cards { display: flex; gap: 1rem; margin: 1.5rem 0; flex-wrap: wrap; }
+  .card { padding: 1rem 1.6rem; border-radius: 10px; color: #fff; font-weight: 700; font-size: 1.05rem; }
+  .card.CRITICAL { background: #c0392b; }
+  .card.HIGH { background: #e67e22; }
+  .card.MEDIUM { background: #f1c40f; color: #24292f; }
+  .card.LOW { background: #3498db; }
+  table { border-collapse: collapse; width: 100%; background: #fff; margin-bottom: 2rem; }
+  th, td { padding: 0.55rem 0.8rem; border: 1px solid #d0d7de; text-align: left; font-size: 0.88rem; vertical-align: top; }
+  th { background: #eaeef2; }
+  .badge { padding: 0.15rem 0.55rem; border-radius: 999px; color: #fff; font-size: 0.72rem; font-weight: 700; white-space: nowrap; }
+  .badge.CRITICAL { background: #c0392b; }
+  .badge.HIGH { background: #e67e22; }
+  .badge.MEDIUM { background: #f1c40f; color: #24292f; }
+  .badge.LOW { background: #3498db; }
+  .badge-category { padding: 0.15rem 0.55rem; border-radius: 4px; background: #eaeef2; color: #57606a; font-size: 0.72rem; font-weight: 600; }
+</style>
+</head>
+<body>
+<h1>🌐 WebSentinel — Web Security Posture Report</h1>
+<p>Target: <code>{{.Target}}</code> · Generated: {{.GeneratedAt.Format "2006-01-02 15:04:05"}}</p>
+
+<div class="hero">
+  <div class="grade-circle grade-{{.Grade}}">{{.Grade}}</div>
+  <div class="score-info">
+    <strong>{{.Score}} / 100</strong><br>
+    Web security posture score
+  </div>
+</div>
+
+<div class="cards">
+  <div class="card CRITICAL">{{index .Summary "CRITICAL"}} CRITICAL</div>
+  <div class="card HIGH">{{index .Summary "HIGH"}} HIGH</div>
+  <div class="card MEDIUM">{{index .Summary "MEDIUM"}} MEDIUM</div>
+  <div class="card LOW">{{index .Summary "LOW"}} LOW</div>
+</div>
+
+<h2>Findings ({{len .Findings}})</h2>
+{{if .Findings}}
+<table>
+  <tr><th>Severity</th><th>Category</th><th>Finding</th><th>Detail</th><th>Recommendation</th></tr>
+  {{range .Findings}}
+  <tr>
+    <td><span class="badge {{.Severity}}">{{.Severity}}</span></td>
+    <td><span class="badge-category">{{.Category}}</span></td>
+    <td><strong>{{.Title}}</strong></td>
+    <td>{{.Detail}}</td>
+    <td>{{.Recommendation}}</td>
+  </tr>
+  {{end}}
+</table>
+{{else}}
+<p>✅ <strong>No findings detected.</strong> Excellent web security posture!</p>
+{{end}}
+
+<footer style="margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #d0d7de; color: #57606a; font-size: 0.85rem;">
+  <p>Generated by <strong>WebSentinel</strong> — Open-source web security posture auditor built in Go.</p>
+  <p>Audit scope: TLS configuration, security headers, cookie flags, and information exposure.</p>
+</footer>
+</body>
+</html>`
+
+// SaveHTML renderiza el reporte con html/template.
+func SaveHTML(r WebAuditReport, path string) error {
+	t, err := template.New("report").Parse(htmlTmpl)
+	if err != nil {
+		return err
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return t.Execute(f, r)
+}

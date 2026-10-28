@@ -1,0 +1,4 @@
+# Secrets y reportes con datos sensibles
+.env
+websentinel-report.json
+websentinel-report.html
